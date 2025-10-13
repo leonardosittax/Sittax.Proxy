@@ -1,0 +1,6 @@
+# /bin/sh
+rm -f /etc/nginx/nginx.conf                                                                                                                                                                                                                                                                                                                                                               cp ./default /etc/nginx/nginx.conf                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  systemctl restart nginx 
+cp ./default /etc/nginx/nginx.conf 
+
+systemctl restart nginx
+echo "✅ NGINX Restaurado com sucesso."
