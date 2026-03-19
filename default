@@ -16,6 +16,8 @@ http {
     # Basic Settings
     ##
 
+    include /etc/nginx/upstream_http.conf;
+    
     sendfile on;
     tcp_nopush on;
     types_hash_max_size 2048;
@@ -60,67 +62,106 @@ http {
 
     include /etc/nginx/conf.d/*.conf;
     # include /etc/nginx/sites-enabled/*;
+    log_format http_detailed '[$time_local] '
+                             'Host: $host | '
+                             'Client: $remote_addr | '
+                             'CF-IP: $http_cf_connecting_ip | '
+                             'X-Forwarded-For: $http_x_forwarded_for | '
+                             'Backend: $backend_name_http | '
+                             'Method: $request_method | '
+                             'URI: $request_uri | '
+                             'Status: $status | '
+                             'Size: $body_bytes_sent bytes | '
+                             'Referer: "$http_referer" | '
+                             'User-Agent: "$http_user_agent" | '
+                             'Request-Time: ${request_time}s | '
+                             'Upstream: $upstream_addr | '
+                             'Upstream-Time: ${upstream_response_time}s';
+    server {
+        listen 127.0.0.1:8080;
+
+        access_log /var/log/nginx/http_router.access.log http_detailed;
+        error_log /var/log/nginx/http_router.error.log;
+	location / {
+            proxy_pass http://$backend_name_http;
+
+            # Headers essenciais
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;  # Cloudflare usa HTTPS
+            proxy_set_header X-Forwarded-Host $host;
+
+            # Headers do Cloudflare
+            proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+            proxy_set_header CF-Ray $http_cf_ray;
+
+            # Timeouts
+            proxy_connect_timeout 600;
+            proxy_send_timeout 600;
+            proxy_read_timeout 600;
+            send_timeout 600;
+
+            # WebSocket support
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+	}
+
+    }
 }
 stream {
-    # Formato dos logs
-    log_format proxy '$remote_addr - $ssl_preread_server_name [$time_local] '
-                     '$protocol $status $bytes_sent $bytes_received '
-                     '$session_time';
-    access_log /var/log/nginx/stream_access.log proxy;
+    ###########################################################################
+    # Formato de logs para stream (TCP/UDP - sem variáveis HTTP)
+    ###########################################################################
 
-    ###########################################################################
-    # Mapeamento baseado no SNI (443) — apenas para conexões TLS
-    ###########################################################################
-    map $ssl_preread_server_name $backend_name_443 {
-        sentry.sittax.com.br sentry;
-        default allDefault;
-    }
+    include /etc/nginx/upstream_https.conf;
+    log_format stream_proxy '[$time_local] '
+                            'Protocol: $protocol | '
+                            'Client: $remote_addr:$remote_port | '
+                            'Backend: $server_addr:$server_port | '
+                            'Upstream: $upstream_addr | '
+                            'Bytes Sent: $bytes_sent | '
+                            'Bytes Received: $bytes_received | '
+                            'Session Time: $session_time s | '
+                            'Status: $status';
 
-    ###########################################################################
-    # Upstreams
-    ###########################################################################
-    upstream sentry {
-        server 192.168.1.201:443;
-    }
-
-    upstream allDefault {
-        server 192.168.1.116:443;
-    }
-
-
-    ###########################################################################
-    # Porta 443 — TLS passthrough com SNI
-    ###########################################################################
+    # Servidor HTTPS com TLS passthrough
     server {
         listen 443;
-        proxy_pass $backend_name_443;
+        listen [::]:443;
+
+	#listen 443 proxy_protocol;
+        #listen [::]:443 proxy_protocol;
+        access_log /var/log/nginx/stream_https.access.log stream_proxy;
+        error_log /var/log/nginx/stream_https.error.log;
+
+	#proxy_protocol on;
+        proxy_pass $backend_name_https;
         ssl_preread on;
     }
 
     ###########################################################################
-    # Porta 80 — TCP proxy simples (sem TLS)
+    # Porta 80 — TCP proxy com roteamento
     ###########################################################################
-    map $server_addr $backend_name_80 {
-        sentry.sittax.com.br sentry_http;
-        default allDefault_http;
+
+    # IMPORTANTE: No stream, não temos $host disponível
+    # Vamos usar $ssl_preread_server_name mesmo na porta 80 não funciona
+    # A solução é rotear TUDO para um backend que fará o roteamento HTTP
+
+    # Opção 1: Rotear tudo para um único servidor que faz proxy HTTP
+    upstream http_router {
+        server 127.0.0.1:8080;  # Nginx HTTP interno que fará o roteamento
     }
 
-    upstream sentry_http {
-        server 192.168.1.201:80;
-    }
-
-    upstream allDefault_http {
-        server 192.168.1.116:80;
-    }
-
-
-    # Se quiser usar hostname também (como o do 443)
-    # você pode mapear por IP, já que $ssl_preread_server_name não funciona aqui.
     server {
         listen 80;
-        # Encaminha tudo da porta 80 para o IP 201
-        proxy_pass sentry_http;
-        # Não use ssl_preread aqui
+        listen [::]:80;
+
+        access_log /var/log/nginx/stream_http.access.log stream_proxy;
+        error_log /var/log/nginx/stream_http.error.log;
+
+        proxy_pass http_router;
     }
 }
 

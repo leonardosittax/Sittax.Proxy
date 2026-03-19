@@ -1,7 +1,7 @@
 # /bin/sh
-rm -f /etc/nginx/nginx.conf
-cp ./nginx.conf /etc/nginx/nginx.conf
-
+# rm -f /etc/nginx/nginx.conf
+cp /home/nginx/.nginx/nginx.conf /etc/nginx/nginx.conf
+cp /home/nginx/.nginx/upstream_*.conf /etc/nginx/
 
 # Testa a configuração do NGINX
 echo ">>    🔍 Testando a configuração do NGINX..."
