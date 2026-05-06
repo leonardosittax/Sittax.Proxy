@@ -1,0 +1,77 @@
+# Trecho a APPENDAR em /home/ubuntu/netmon/vector/vector.yaml (na máquina
+# 192.168.2.50). Adiciona um source syslog UDP, parser, e sink ClickHouse
+# para a tabela netmon.nginx_access. NÃO remove nada do que já existe.
+#
+# Depois de adicionar, expor a porta 5140/UDP no docker-compose:
+#   services.vector.ports: ["5140:5140/udp"]
+# E reiniciar: docker compose up -d vector
+
+sources:
+  nginx_syslog:
+    type: syslog
+    address: 0.0.0.0:5140
+    mode: udp
+
+transforms:
+  nginx_parse:
+    type: remap
+    inputs: [nginx_syslog]
+    drop_on_error: true
+    drop_on_abort: true
+    source: |
+      # O nginx envia a linha de log JSON dentro do campo `message` do syslog.
+      payload, err = parse_json(.message)
+      if err != null { abort }
+
+      # Tag definido em access_log syslog:server=...,tag=nginx_http|nginx_stream
+      # Vector preenche em .appname
+      tag = to_string(.appname) ?? ""
+      payload.src = if tag == "nginx_stream" { "stream" } else { "http" }
+
+      . = payload
+
+      # Coerções para casar com o schema da tabela
+      .ts            = parse_timestamp!(to_string(.ts) ?? now(), format: "%+")
+      .host          = to_string(.host)            ?? ""
+      .client        = to_string(.client)          ?? ""
+      .cf_ip         = to_string(.cf_ip)           ?? ""
+      .xff           = to_string(.xff)             ?? ""
+      .backend       = to_string(.backend)         ?? ""
+      .upstream      = to_string(.upstream)        ?? ""
+      .upstream_status = to_string(.upstream_status) ?? ""
+      .method        = to_string(.method)          ?? ""
+      .uri           = to_string(.uri)             ?? ""
+      .status        = to_int(.status)             ?? 0
+      .size          = to_int(.size)               ?? 0
+      .bytes_recv    = to_int(.bytes_recv)         ?? 0
+      .req_time      = to_float(.req_time)         ?? 0.0
+      .upstream_time = to_string(.upstream_time)   ?? ""
+      .session_time  = to_float(.session_time)     ?? 0.0
+      .sni           = to_string(.sni)             ?? ""
+      .protocol      = to_string(.protocol)        ?? ""
+      .referer       = to_string(.referer)         ?? ""
+      .ua            = to_string(.ua)              ?? ""
+      .ssl_proto     = to_string(.ssl_proto)       ?? ""
+      .scheme        = to_string(.scheme)          ?? ""
+      .req_len       = to_int(.req_len)            ?? 0
+
+sinks:
+  clickhouse_nginx:
+    type: clickhouse
+    inputs: [nginx_parse]
+    endpoint: http://clickhouse:8123
+    database: netmon
+    table: nginx_access
+    auth:
+      strategy: basic
+      user: netflow
+      password: netflow123
+    compression: gzip
+    skip_unknown_fields: true
+    batch:
+      max_events: 2000
+      timeout_secs: 3
+    request:
+      retry_attempts: 5
+    healthcheck:
+      enabled: true

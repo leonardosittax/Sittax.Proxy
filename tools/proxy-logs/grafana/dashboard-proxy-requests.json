@@ -1,0 +1,155 @@
+{
+  "title": "Proxy Sittax — Requisições",
+  "uid": "sittax-proxy-requests",
+  "tags": ["proxy", "nginx", "sittax"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "host_filter",
+        "label": "Domínio (host)",
+        "type": "textbox",
+        "current": { "text": "%", "value": "%" },
+        "query": "%"
+      },
+      {
+        "name": "min_status",
+        "label": "Status mínimo",
+        "type": "textbox",
+        "current": { "text": "0", "value": "0" },
+        "query": "0"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requisições por minuto (HTTP)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 7 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [
+        { "refId": "A", "format": 0, "rawSql": "SELECT toStartOfMinute(toDateTime(ts)) AS time, count()/60.0 AS \"req/s\" FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='http' AND host LIKE '${host_filter}' AND status >= ${min_status} GROUP BY time ORDER BY time" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Sessões por minuto (TLS stream)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 7 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "refId": "A", "format": 0, "rawSql": "SELECT toStartOfMinute(toDateTime(ts)) AS time, sni AS series, count() AS sess FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='stream' AND sni LIKE '${host_filter}' GROUP BY time, sni ORDER BY time" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Distribuição de status code (HTTP)",
+      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 7 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "stacking": { "mode": "normal" } } } },
+      "targets": [
+        { "refId": "A", "format": 0, "rawSql": "SELECT toStartOfMinute(toDateTime(ts)) AS time, multiIf(status BETWEEN 200 AND 299,'2xx', status BETWEEN 300 AND 399,'3xx', status BETWEEN 400 AND 499,'4xx', status BETWEEN 500 AND 599,'5xx','other') AS class, count() AS c FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='http' AND host LIKE '${host_filter}' GROUP BY time, class ORDER BY time" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Latência HTTP — p50/p95/p99 (s)",
+      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 7 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "refId": "A", "format": 0, "rawSql": "SELECT toStartOfMinute(toDateTime(ts)) AS time, quantile(0.50)(req_time) AS p50, quantile(0.95)(req_time) AS p95, quantile(0.99)(req_time) AS p99 FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='http' AND host LIKE '${host_filter}' GROUP BY time ORDER BY time" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Top hosts (domínios) por requests",
+      "gridPos": { "x": 0, "y": 14, "w": 8, "h": 9 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        { "refId": "A", "format": 1, "rawSql": "SELECT host, count() AS reqs, formatReadableSize(sum(size)) AS bytes, round(quantile(0.95)(req_time),3) AS p95s FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='http' AND host LIKE '${host_filter}' GROUP BY host ORDER BY reqs DESC LIMIT 30" }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Top SNI (stream) por sessões",
+      "gridPos": { "x": 8, "y": 14, "w": 8, "h": 9 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        { "refId": "A", "format": 1, "rawSql": "SELECT sni, count() AS sess, formatReadableSize(sum(size)) AS sent, formatReadableSize(sum(bytes_recv)) AS recv, round(avg(session_time),1) AS avg_s FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='stream' AND sni LIKE '${host_filter}' GROUP BY sni ORDER BY sess DESC LIMIT 30" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Top backends (HTTP)",
+      "gridPos": { "x": 16, "y": 14, "w": 8, "h": 9 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        { "refId": "A", "format": 1, "rawSql": "SELECT backend, count() AS reqs, formatReadableSize(sum(size)) AS bytes, round(quantile(0.95)(req_time),3) AS p95s FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='http' AND host LIKE '${host_filter}' GROUP BY backend ORDER BY reqs DESC LIMIT 30" }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "table",
+      "title": "Top URIs",
+      "gridPos": { "x": 0, "y": 23, "w": 12, "h": 9 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        { "refId": "A", "format": 1, "rawSql": "SELECT substring(uri,1,120) AS uri, count() AS reqs, anyLast(host) AS sample_host, anyLast(status) AS last_status FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='http' AND host LIKE '${host_filter}' GROUP BY uri ORDER BY reqs DESC LIMIT 30" }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "table",
+      "title": "Top client IPs (CF-IP > XFF > remote_addr)",
+      "gridPos": { "x": 12, "y": 23, "w": 12, "h": 9 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        { "refId": "A", "format": 1, "rawSql": "SELECT if(cf_ip != '' AND cf_ip != '-', cf_ip, if(xff != '' AND xff != '-', splitByChar(',', xff)[1], client)) AS real_ip, count() AS reqs, uniq(host) AS hosts, uniq(uri) AS uniq_uri, anyLast(ua) AS sample_ua FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='http' GROUP BY real_ip ORDER BY reqs DESC LIMIT 30" }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "table",
+      "title": "Tentativas de exploit (URIs/UA suspeitos)",
+      "description": "Heurística: filtra URIs com padrões típicos de scan/RCE (wget, eval, ../, .env, /admin, /phpunit, /device.rsp, etc) e UAs vazios/cmd. Cada linha é um candidato a investigar.",
+      "gridPos": { "x": 0, "y": 32, "w": 24, "h": 12 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        { "refId": "A", "format": 1, "rawSql": "SELECT toDateTime(ts) AS time, if(cf_ip != '' AND cf_ip != '-', cf_ip, client) AS real_ip, host, method, status, substring(uri,1,200) AS uri_excerpt, substring(ua,1,80) AS ua_excerpt FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='http' AND ( match(uri,'(?i)(wget|curl |/bin/|;rm |chmod |\\\\.\\\\./|\\\\.env|/wp-(admin|login)|/phpmyadmin|/phpunit|/eval|/cgi-bin|/console|/shell|/setup\\\\.cgi|device\\\\.rsp|\\\\.git/|/actuator|/api/v1/version|/api/jsonws|/jenkins|/solr|/druid|/_ignition|/HNAP1)') OR match(ua,'(?i)(zgrab|nuclei|masscan|nmap|sqlmap|nikto|dirbuster|wpscan|gobuster|fuzz|hydra)') OR ua='' OR ua='-' ) ORDER BY time DESC LIMIT 200" }
+      ]
+    },
+    {
+      "id": 40,
+      "type": "table",
+      "title": "Top User-Agents",
+      "gridPos": { "x": 0, "y": 44, "w": 12, "h": 9 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        { "refId": "A", "format": 1, "rawSql": "SELECT substring(ua,1,120) AS ua, count() AS reqs, uniq(host) AS hosts, uniq(if(cf_ip != '' AND cf_ip != '-', cf_ip, client)) AS uniq_ips FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='http' GROUP BY ua ORDER BY reqs DESC LIMIT 25" }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "table",
+      "title": "Erros 5xx por host (últimos)",
+      "gridPos": { "x": 12, "y": 44, "w": 12, "h": 9 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        { "refId": "A", "format": 1, "rawSql": "SELECT toDateTime(ts) AS time, host, status, backend, substring(uri,1,80) AS uri, round(req_time,3) AS rt FROM netmon.nginx_access WHERE $__timeFilter(toDateTime(ts)) AND src='http' AND status >= 500 ORDER BY time DESC LIMIT 100" }
+      ]
+    }
+  ]
+}

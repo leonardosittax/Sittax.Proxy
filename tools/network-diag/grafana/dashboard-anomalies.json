@@ -1,0 +1,197 @@
+{
+  "title": "NetFlow — Detecção de Anomalias e Ataques",
+  "uid": "netmon-anomalies",
+  "tags": ["netflow", "netmon", "security"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "pub_ip",
+        "label": "IP público",
+        "type": "textbox",
+        "current": { "text": "177.223.44.35", "value": "177.223.44.35" },
+        "query": "177.223.44.35"
+      },
+      {
+        "name": "spike_threshold_mb",
+        "label": "Limiar pico (MiB/min)",
+        "type": "textbox",
+        "current": { "text": "300", "value": "300" },
+        "query": "300"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Banda WAN — Total / LAN→WAN / Inbound→Público (bytes por minuto)",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "lineWidth": 2 } } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 0,
+          "rawSql": "SELECT toStartOfMinute(time_received) AS time, sum(bytes)/60 AS \"Total Bps\" FROM netflow.flows WHERE $__timeFilter(time_received) GROUP BY time ORDER BY time"
+        },
+        {
+          "refId": "B",
+          "format": 0,
+          "rawSql": "SELECT toStartOfMinute(time_received) AS time, sum(bytes)/60 AS \"LAN→WAN Bps\" FROM netflow.flows WHERE $__timeFilter(time_received) AND match(src_addr,'^192\\.168\\.') AND NOT match(dst_addr,'^(192\\.168\\.|10\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)') GROUP BY time ORDER BY time"
+        },
+        {
+          "refId": "C",
+          "format": 0,
+          "rawSql": "SELECT toStartOfMinute(time_received) AS time, sum(bytes)/60 AS \"Inbound→Pub Bps\" FROM netflow.flows WHERE $__timeFilter(time_received) AND dst_addr='${pub_ip}' GROUP BY time ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Pico atual janela (MiB/min)",
+      "gridPos": { "x": 0, "y": 8, "w": 6, "h": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "decmbytes", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 300 }] } } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "WITH per_min AS (SELECT toStartOfMinute(time_received) AS m, sum(bytes)/1024/1024 AS mib FROM netflow.flows WHERE $__timeFilter(time_received) GROUP BY m) SELECT max(mib) AS peak FROM per_min"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Hosts LAN distintos",
+      "gridPos": { "x": 6, "y": 8, "w": 6, "h": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "SELECT uniq(src_addr) AS lan_hosts FROM netflow.flows WHERE $__timeFilter(time_received) AND match(src_addr,'^192\\.168\\.')"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Sources externos batendo no IP público",
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "SELECT uniq(src_addr) AS ext_sources FROM netflow.flows WHERE $__timeFilter(time_received) AND dst_addr='${pub_ip}' AND NOT match(src_addr,'^(192\\.168\\.|10\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)')"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Total bytes",
+      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "fieldConfig": { "defaults": { "unit": "decbytes" } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "SELECT sum(bytes) AS total FROM netflow.flows WHERE $__timeFilter(time_received)"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Top hosts LAN — UPLOAD para WAN",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "SELECT src_addr AS host, formatReadableSize(sum(bytes)) AS up, sum(packets) AS pkts, uniq(dst_addr) AS uniq_dst, arrayStringConcat(groupUniqArray(5)(dst_addr), ', ') AS sample_dsts FROM netflow.flows WHERE $__timeFilter(time_received) AND match(src_addr,'^192\\.168\\.') AND NOT match(dst_addr,'^(192\\.168\\.|10\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)') GROUP BY host ORDER BY sum(bytes) DESC LIMIT 25"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Top sources externos batendo no IP público",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "SELECT src_addr, proto, formatReadableSize(sum(bytes)) AS B, sum(packets) AS pkts, uniq(dst_port) AS uniq_dport FROM netflow.flows WHERE $__timeFilter(time_received) AND dst_addr='${pub_ip}' GROUP BY src_addr, proto ORDER BY sum(bytes) DESC LIMIT 25"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "table",
+      "title": "Picos: minutos com tráfego > ${spike_threshold_mb} MiB/min",
+      "gridPos": { "x": 0, "y": 22, "w": 12, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "SELECT toStartOfMinute(time_received) AS minute, formatReadableSize(sum(bytes)) AS B, sum(packets) AS pkts, uniq(src_addr,dst_addr) AS pairs FROM netflow.flows WHERE $__timeFilter(time_received) GROUP BY minute HAVING sum(bytes) > ${spike_threshold_mb}*1024*1024 ORDER BY minute DESC LIMIT 100"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "table",
+      "title": "Uploads para porta 8080/9090 (frota CFTV)",
+      "gridPos": { "x": 12, "y": 22, "w": 12, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "SELECT src_addr AS host, dst_port AS port, formatReadableSize(sum(bytes)) AS up, sum(packets) AS pkts, uniq(dst_addr) AS uniq_dst FROM netflow.flows WHERE $__timeFilter(time_received) AND match(src_addr,'^192\\.168\\.') AND NOT match(dst_addr,'^(192\\.168\\.|10\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)') AND dst_port IN (8080,9090) AND proto='TCP' GROUP BY host, port ORDER BY sum(bytes) DESC LIMIT 25"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "table",
+      "title": "Top portas destino externas (LAN→WAN)",
+      "gridPos": { "x": 0, "y": 32, "w": 12, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "SELECT proto, dst_port AS port, formatReadableSize(sum(bytes)) AS up, sum(packets) AS pkts, uniq(src_addr) AS uniq_src FROM netflow.flows WHERE $__timeFilter(time_received) AND match(src_addr,'^192\\.168\\.') AND NOT match(dst_addr,'^(192\\.168\\.|10\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)') GROUP BY proto, port ORDER BY sum(bytes) DESC LIMIT 20"
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "table",
+      "title": "Anomalia por host (z-score 7d hourly mean)",
+      "gridPos": { "x": 12, "y": 32, "w": 12, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse" },
+      "targets": [
+        {
+          "refId": "A",
+          "format": 1,
+          "rawSql": "WITH hourly AS (SELECT src_addr, toStartOfHour(time_received) AS h, sum(bytes) AS up FROM netflow.flows WHERE time_received > now() - INTERVAL 7 DAY AND match(src_addr,'^192\\.168\\.') AND NOT match(dst_addr,'^(192\\.168\\.|10\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)') GROUP BY src_addr, h), stats AS (SELECT src_addr, avg(up) AS mean, stddevPop(up) AS sd FROM hourly WHERE h < toStartOfHour(now()) - INTERVAL 1 HOUR GROUP BY src_addr), last_h AS (SELECT src_addr, sum(bytes) AS up_last FROM netflow.flows WHERE time_received > now() - INTERVAL 1 HOUR AND match(src_addr,'^192\\.168\\.') AND NOT match(dst_addr,'^(192\\.168\\.|10\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.)') GROUP BY src_addr) SELECT s.src_addr AS host, formatReadableSize(l.up_last) AS up_last_h, formatReadableSize(toUInt64(s.mean)) AS hist_mean_h, round((l.up_last - s.mean) / nullIf(s.sd,0), 2) AS zscore FROM stats s INNER JOIN last_h l USING (src_addr) WHERE l.up_last > 100*1024*1024 AND s.sd > 0 ORDER BY zscore DESC NULLS LAST LIMIT 20"
+        }
+      ]
+    }
+  ]
+}
