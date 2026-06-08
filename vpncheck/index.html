@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Validador de acesso à Homologação — VPN / DNS interno</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, "Segoe UI", Roboto, sans-serif; background:#0e1116; color:#e6edf3; line-height:1.5; }
+  .wrap { max-width:880px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  .lead { color:#8b949e; margin:0 0 24px; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:20px 22px; margin:16px 0; }
+  .verdict { font-size:1.25rem; font-weight:700; display:flex; align-items:center; gap:10px; }
+  .v-ok { color:#3fb950; } .v-bad { color:#f85149; } .v-wait { color:#d29922; }
+  .sub { color:#8b949e; margin-top:6px; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  td { padding:8px 6px; border-bottom:1px solid #21262d; font-size:.95rem; }
+  td:first-child { color:#adbac7; font-family: ui-monospace, monospace; }
+  .pill { font-size:.8rem; font-weight:700; padding:2px 9px; border-radius:20px; white-space:nowrap; }
+  .p-ok { background:#11331c; color:#3fb950; } .p-bad { background:#3a1416; color:#f85149; } .p-wait { background:#33280c; color:#d29922; }
+  button { background:#238636; color:#fff; border:0; border-radius:8px; padding:10px 18px; font-size:.95rem; font-weight:600; cursor:pointer; }
+  button:hover { background:#2ea043; } button:disabled { background:#30363d; color:#8b949e; cursor:default; }
+  h2 { font-size:1.05rem; margin:22px 0 8px; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .tab { background:#21262d; color:#adbac7; border:1px solid #30363d; border-radius:8px; padding:6px 14px; cursor:pointer; font-size:.9rem; }
+  .tab.active { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+  pre { background:#0d1117; border:1px solid #21262d; border-radius:8px; padding:12px 14px; overflow-x:auto; position:relative; margin:8px 0; }
+  code { font-family: ui-monospace, "Cascadia Code", monospace; font-size:.88rem; }
+  .cmd { display:none; } .cmd.active { display:block; }
+  .copy { position:absolute; top:8px; right:8px; background:#21262d; border:1px solid #30363d; color:#adbac7; border-radius:6px; padding:3px 9px; font-size:.75rem; cursor:pointer; }
+  .hint { background:#1c2128; border-left:3px solid #d29922; padding:10px 14px; border-radius:6px; margin:12px 0; font-size:.9rem; }
+  .ok-exp { color:#3fb950; font-weight:600; } .bad-exp { color:#f85149; font-weight:600; }
+  .muted { color:#6e7681; font-size:.82rem; }
+  ol { padding-left:1.3em; } ol li { margin:4px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Validador de acesso à Homologação</h1>
+  <p class="lead">Confirme se, com a VPN ligada, você resolve os ambientes para o <b>servidor interno (192.168.2.32)</b>. Quando o acesso público for bloqueado, <b>só quem resolve pelo interno continuará acessando</b>.</p>
+
+  <div class="card">
+    <div id="verdict" class="verdict v-wait"><span id="vicon">⏳</span><span id="vtext">Testando…</span></div>
+    <div id="vsub" class="sub">Fazendo requisições aos endpoints de teste (somente VPN/local respondem).</div>
+    <table id="results"></table>
+    <p style="margin-top:14px"><button id="retry" disabled>↻ Testar de novo</button></p>
+  </div>
+
+  <h2>Como funciona</h2>
+  <div class="card" style="font-size:.92rem">
+    Esta página faz um <code>GET</code> em endpoints de teste (<code>test-vpn.&lt;env&gt;.sittax.com.br:8089</code>) que <b>só aceitam conexões internas (VPN/LAN)</b> por geo-IP.
+    <ul style="margin:8px 0">
+      <li><span class="ok-exp">Respondeu 200</span> → você resolveu para o <b>interno (.32)</b> via VPN. ✅ Vai continuar funcionando após o bloqueio.</li>
+      <li><span class="bad-exp">Falhou / bloqueado</span> → você está resolvendo pelo <b>IP público (177.223.44.35)</b> ou sem VPN. ❌ <b>Vai ficar sem acesso</b> quando o público for bloqueado.</li>
+    </ul>
+    <span class="muted">Se um ambiente responde interno, todos respondem (mesmo DNS interno). Os endpoints não servem conteúdo — só validam a origem.</span>
+  </div>
+
+  <h2 id="fixtitle">Se deu ❌ — verifique no seu computador</h2>
+  <div class="card">
+    <p style="margin-top:0">Rode os comandos abaixo. O esperado é a URL resolver para <b class="ok-exp">192.168.2.32</b> (interno). Se resolver para <b class="bad-exp">177.223.44.35</b> ou um IP da Cloudflare (104.x / 172.67.x), você está no <b>DNS público</b>.</p>
+    <div class="tabs">
+      <div class="tab active" data-os="win">Windows (PowerShell)</div>
+      <div class="tab" data-os="cmd">Windows (CMD)</div>
+      <div class="tab" data-os="mac">macOS</div>
+      <div class="tab" data-os="linux">Linux</div>
+    </div>
+
+    <div class="cmd active" data-os="win">
+      <pre><button class="copy">copiar</button><code>ping 192.168.2.32
+Resolve-DnsName stage.sittax.com.br
+ipconfig /flushdns
+Resolve-DnsName stage.sittax.com.br</code></pre>
+    </div>
+    <div class="cmd" data-os="cmd">
+      <pre><button class="copy">copiar</button><code>ping 192.168.2.32
+nslookup stage.sittax.com.br
+ipconfig /flushdns
+nslookup stage.sittax.com.br</code></pre>
+    </div>
+    <div class="cmd" data-os="mac">
+      <pre><button class="copy">copiar</button><code>ping -c 4 192.168.2.32
+nslookup stage.sittax.com.br
+sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+nslookup stage.sittax.com.br</code></pre>
+    </div>
+    <div class="cmd" data-os="linux">
+      <pre><button class="copy">copiar</button><code>ping -c 4 192.168.2.32
+getent hosts stage.sittax.com.br        # ou: nslookup stage.sittax.com.br
+sudo resolvectl flush-caches            # ou: sudo systemd-resolve --flush-caches
+getent hosts stage.sittax.com.br</code></pre>
+    </div>
+
+    <div class="hint">
+      <b>Como interpretar:</b><br>
+      • <code>ping 192.168.2.32</code> responde → você alcança a rede interna (VPN/LAN OK).<br>
+      • <code>nslookup</code> retorna <b class="ok-exp">192.168.2.32</b> → DNS interno OK ✅.<br>
+      • <code>nslookup</code> retorna <b class="bad-exp">177.223.44.35</b> / IP Cloudflare → DNS público ❌.
+    </div>
+    <h2 style="font-size:1rem">Para corrigir</h2>
+    <ol>
+      <li>Confirme que a <b>VPN está conectada</b>.</li>
+      <li>Rode o <b>flush de DNS</b> do seu SO (comandos acima) e teste de novo.</li>
+      <li>Se o <code>ping 192.168.2.32</code> falhar → problema de <b>VPN/rota</b> (reconecte a VPN).</li>
+      <li>Se o ping funciona mas o <code>nslookup</code> dá IP público → problema de <b>DNS</b> (reconecte a VPN para repegar o DNS interno; no Windows isso reaplica o <code>block-outside-dns</code>).</li>
+      <li>Persistindo, chame a infra com o print desta página.</li>
+    </ol>
+  </div>
+
+  <p class="muted">Origem desta página: <span id="origin"></span> · <span id="when"></span></p>
+</div>
+
+<script>
+(function () {
+  var ENVS = ['stage', 'dev', 'qa01', 'qa02', 'qa03'];
+  var PORT = 8089;
+  var TIMEOUT = 6000;
+
+  var resultsEl = document.getElementById('results');
+  var rows = {};
+  ENVS.forEach(function (env) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>test-vpn.' + env + '.sittax.com.br</td>' +
+                   '<td style="text-align:right"><span class="pill p-wait">testando…</span></td>';
+    resultsEl.appendChild(tr);
+    rows[env] = tr.querySelector('.pill');
+  });
+
+  function setPill(env, cls, txt) {
+    var p = rows[env];
+    p.className = 'pill ' + cls;
+    p.textContent = txt;
+  }
+
+  function testEnv(env) {
+    var url = 'http://test-vpn.' + env + '.sittax.com.br:' + PORT + '/?t=' + Date.now();
+    var ctrl = new AbortController();
+    var tm = setTimeout(function () { ctrl.abort(); }, TIMEOUT);
+    return fetch(url, { cache: 'no-store', signal: ctrl.signal })
+      .then(function (r) {
+        clearTimeout(tm);
+        if (r.status === 200) return 'interno';
+        if (r.status === 403) return 'publico';   // alcançou o .32 mas geo negou
+        return 'inesperado';
+      })
+      .catch(function () { clearTimeout(tm); return 'falha'; }); // inacessível / DNS público / sem VPN
+  }
+
+  function render(env, res) {
+    if (res === 'interno') setPill(env, 'p-ok', 'INTERNO ✓');
+    else if (res === 'publico') setPill(env, 'p-bad', 'PÚBLICO');
+    else if (res === 'falha') setPill(env, 'p-bad', 'não alcançou');
+    else setPill(env, 'p-wait', 'inesperado');
+  }
+
+  function finish(states) {
+    var anyInternal = states.some(function (s) { return s === 'interno'; });
+    var v = document.getElementById('verdict');
+    var icon = document.getElementById('vicon');
+    var text = document.getElementById('vtext');
+    var sub = document.getElementById('vsub');
+    if (anyInternal) {
+      v.className = 'verdict v-ok'; icon.textContent = '✅';
+      text.textContent = 'VPN + DNS interno OK';
+      sub.textContent = 'Você resolve os ambientes pelo servidor interno (192.168.2.32). Vai continuar acessando quando o público for bloqueado.';
+      document.getElementById('fixtitle').style.display = 'none';
+    } else {
+      v.className = 'verdict v-bad'; icon.textContent = '❌';
+      text.textContent = 'Você está resolvendo pelo PÚBLICO';
+      sub.textContent = 'Nenhum endpoint interno respondeu. Quando o acesso público for bloqueado, você ficará SEM acesso à homologação. Veja abaixo como corrigir.';
+    }
+    document.getElementById('retry').disabled = false;
+  }
+
+  function runAll() {
+    document.getElementById('retry').disabled = true;
+    ENVS.forEach(function (e) { setPill(e, 'p-wait', 'testando…'); });
+    var states = [];
+    Promise.all(ENVS.map(function (env) {
+      return testEnv(env).then(function (res) { render(env, res); states.push(res); });
+    })).then(function () { finish(states); });
+  }
+
+  // tabs
+  document.querySelectorAll('.tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      var os = t.getAttribute('data-os');
+      document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('active', x === t); });
+      document.querySelectorAll('.cmd').forEach(function (c) { c.classList.toggle('active', c.getAttribute('data-os') === os); });
+    });
+  });
+  // copy
+  document.querySelectorAll('.copy').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var code = b.parentElement.querySelector('code').textContent;
+      navigator.clipboard.writeText(code).then(function () { b.textContent = 'copiado!'; setTimeout(function(){ b.textContent='copiar'; }, 1500); });
+    });
+  });
+
+  document.getElementById('origin').textContent = location.href;
+  document.getElementById('when').textContent = new Date().toLocaleString('pt-BR');
+  document.getElementById('retry').addEventListener('click', runAll);
+  runAll();
+})();
+</script>
+</body>
+</html>
