@@ -1,0 +1,8 @@
+# Checkout em Windows/WSL estava convertendo tudo para CRLF e gerando diff
+# de arquivo inteiro sem mudanca de conteudo. Fixa LF no que e lido por
+# Linux (nginx, shell) e deixa CRLF so onde faz sentido.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.tgz binary

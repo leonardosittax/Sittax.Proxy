@@ -1,15 +1,84 @@
 # Plano de Ação — Isolamento de Acesso ao Ambiente de Homologação
 
-> **Status:** rascunho para execução em janela de manutenção (fim de semana).
-> Bloquear o acesso público à homologação **pode parar a esteira de teste** se algum
-> sistema automatizado bate em `stage.sittax.com.br` pela internet — por isso a **Fase 0
-> (levantamento) é obrigatória antes de qualquer mudança**.
+> **Status (2026-06-01):** PARCIALMENTE EXECUTADO, com abordagem **simplificada** frente ao
+> rascunho original (3 camadas). A solução real: **split-DNS no MikroTik + ajustes na VPN `.138`,
+> concentrando o roteamento no proxy `.32`** — ver **§0**. O **bloqueio público foi adiado**
+> (não aplicado). As seções 1–9 abaixo são o rascunho original (contexto/achados ainda úteis,
+> partes superadas pela §0).
 >
-> **Objetivo:** `stage.sittax.com.br` (e `*.stage.sittax.com.br`) só acessível por quem
-> está na **VPN ou na LAN do escritório**, mantendo o **Let's Encrypt funcionando** e
-> **sem** apontar o DNS público para IP interno.
->
-> Última verificação nas máquinas: **2026-05-29**.
+> **Objetivo:** ambientes de homolog/dev/QA (`*.{stage,dev,qa01,qa02,qa03}.sittax.com.br`)
+> acessíveis por **VPN ou LAN do escritório**, mantendo **Let's Encrypt** e **sem** apontar
+> DNS público para IP interno. **Produção (`app.sittax.com.br`) permanece pública/intacta.**
+
+---
+
+## 0. Execução real (2026-06-01)
+
+### ✅ O que foi feito (passo a passo)
+
+1. **Levantamento.** Via DNS público: `stage.sittax.com.br` (apex) estava **atrás do
+   Cloudflare (orange)** e `*.stage` era **wildcard cinza** (`→ devserver → 177.223.44.35`).
+   A premissa do rascunho ("tudo gray, DNS → WAN") estava **errada para o apex**.
+   `.149` (observability stage) continua **vivo**.
+
+2. **Split-DNS — `dnsmasq` no `.32`** (manda os ambientes para o proxy `.32`):
+   - **Decisão final:** o split-DNS **saiu do MikroTik** e foi para **dnsmasq no `.32`**. O MikroTik
+     6.49 não dava conta (sem alternância `(a|b|c)`, não casava o apex vazio, nome-exato não ganhava
+     de regex, sem AAAA-NODATA — fonte de "alguns problemas"). O MikroTik agora **só encaminha**
+     (`/ip dns set servers=192.168.2.32`) e perdeu os `static` de sittax.
+   - dnsmasq (`/etc/dnsmasq.d/sittax-split.conf`, escuta só `192.168.2.32:53`):
+     `address=/<env>.sittax.com.br/192.168.2.32` (wildcard = apex + subdomínios numa linha) p/
+     `stage|dev|qa01|qa02|qa03`; exceções `db.dev → 192.168.1.109` (Postgres) e
+     `internal.dev → 192.168.2.116` (dnsmasq usa o match mais específico); **AAAA = NODATA**
+     automático (força IPv4, sem sinkhole). Produção (`app.sittax.com.br`) é encaminhada pra
+     internet, não vai pro `.32`.
+   - Comandos e detalhes: **`dns-dnsmasq.md`** (o `mikrotik-split-dns.md` ficou SUPERADO/histórico).
+
+3. **VPN OpenVPN `.138`** (`/etc/openvpn/server/server.conf`):
+   - `push "dhcp-option DNS 192.168.2.1"` + `push "block-outside-dns"` — faz o cliente usar o
+     DNS do túnel (corrige vazamento de DNS do Windows no split-tunnel). **Server-side, sem
+     mexer na máquina do usuário** (só reconectar).
+   - `tun-mtu 1500` + `mssfix 1360` — corrigiu **HTTPS resetando pela VPN**: era **MTU/PMTUD
+     blackhole** (WAN PPPoE 1492; `ping -f -l 1472` dava timeout, `1400` passava).
+   - Confirmado: VPN resolve `stage → 192.168.2.32` e abre HTTPS com cert LE válido.
+
+4. **Cloudflare:** `stage` e `sentry` tirados do proxy (**orange → gray**) → resolvem direto
+   na origem (`177.223.44.35`), eliminando o erro **525** (handshake CF↔origem).
+   `grafana.sittax.com.br` **ainda orange**.
+
+5. **Proxy `.32`:** gate de bloqueio público preparado em `upstream_https.conf`
+   (`geo $allowed_ip` com `default 0`) — **NÃO deployado** (bloqueio adiado).
+
+### 🔧 O que ainda precisa corrigir (URLs e pendências)
+
+1. **URLs fora do padrão de ambiente** — rodam no `.116` mas o split-DNS estreito **NÃO cobre**
+   (resolvem público; OK enquanto nada está bloqueado, mas ficam de fora quando bloquear):
+   - Família **`homologacao`**: `homologacao.sittax.com.br`, `apihomologacao`,
+     `autenticacaohomologacao`, `apuracaohomologacao`, `recuperahomologacao`, … (parece ambiente real).
+   - Família **`st`**: `sthomologacao`, `apisthomologacao`, `previewst`, …
+   - Tools **`*dev`** (concatenado): `portainerdev`, `browserlessdev`, `traefikdev`, `storagedev`, …
+   - `redmine`, `sonarqube`, `n8nmarketing`.
+   - ➡️ **Decidir quais entram no split-DNS.** Nomes concatenados (`apihomologacao`, sem ponto)
+     exigem ajuste de regex (ver `mikrotik-split-dns.md`). Tornar esses hosts **explícitos** nos
+     mapas do nginx: ver **`nginx.conf.patch.md` §1**.
+
+2. 🔴 **Let's Encrypt PAUSADO** no `.116` (`429 rateLimited` — conta temporariamente pausada).
+   Certs **não renovam**.
+   - **Unpause** no link `portal.letsencrypt.org/sfe/...` que aparece nos logs do `traefik_traefik`.
+   - **Reduzir nº de domínios/pedidos** (`acme.json` com **1.15 MB** = domínios demais → rate limit).
+   - **Crítico agora** que `stage`/`sentry` são **gray** (dependem do cert de **origem** direto,
+     sem o cert de borda do Cloudflare como rede de segurança).
+
+3. **Serviços down:** muitos `qa-02_*` e `qa-03_*` em **0 réplicas** no Swarm do `.116`.
+
+4. **Bloqueio público** (núcleo do objetivo) **ainda não aplicado** — adiado. Opções: dropar
+   **443 de entrada na WAN** do MikroTik (`in-interface=<WAN>`), ou deployar o gate do `.32`
+   (`upstream_https.conf`). **Porta 80/ACME não pode ser bloqueada** (renovação LE).
+
+### 📁 Arquivos relacionados
+- **`mikrotik-split-dns.md`** — comandos do split-DNS (apex `name=` + subdomínios regex + sinkhole AAAA).
+- **`upstream_https.conf`** — gate de bloqueio (`geo` default-deny) — **não deployado**.
+- **`nginx.conf.patch.md`** — patch de 522/failover + mapeamento explícito de `stage.*` (URLs).
 
 ---
 

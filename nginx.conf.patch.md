@@ -1,5 +1,18 @@
 # Patch nginx — reduzir 522 intermitente
 
+> **Contexto (2026-06-01):** relacionado ao isolamento de homologação — ver
+> `plano-isolamento-homologacao.md` (§0) e `mikrotik-split-dns.md`.
+>
+> A **§1 abaixo (mapear hostnames explicitamente) é a parte de "corrigir as URLs".** Hoje os
+> ambientes (`stage`, `*.{dev,qa01,qa02,qa03}.sittax.com.br`) e a família `*homologacao`
+> caem no **catch-all `allDefault` (.116)** por `default`. Vale torná-los **explícitos** nos
+> mapas `map $ssl_preread_server_name` (443, em `upstream_https.conf`) e `map $host`
+> (80, em `upstream_http.conf`) para: clareza nos logs, roteamento previsível e para casar
+> com o split-DNS estreito (que cobre só `stage|dev|qa01|qa02|qa03`). A lista completa de
+> hostnames roteados pelo `.116` foi levantada das labels do Traefik (Host rules).
+>
+> **Status do restante deste patch (failover/timeouts/rlimit): NÃO aplicado.**
+
 ## 1. Adicionar `stage.sittax.com.br` explícito (clareza nos logs)
 
 **`upstream_https.conf`** — antes do `default`:

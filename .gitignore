@@ -1,0 +1,8 @@
+
+# Composes legadas com credenciais embutidas (histórico local, ver legacy-stacks/README.md)
+legacy-stacks/*.yml
+
+# Perfis OpenVPN com certificado e chave privada embutidos.
+# O OpenVPN foi descontinuado (ver pops/README.md) — estes arquivos ficam
+# apenas como historico local e NAO podem ser commitados.
+keys/

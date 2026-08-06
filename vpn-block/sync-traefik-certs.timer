@@ -1,0 +1,12 @@
+[Unit]
+Description=Sincroniza os certificados do Traefik diariamente
+
+[Timer]
+# O Traefik renova ~30 dias antes de vencer, entao uma checagem diaria da
+# margem de sobra. RandomizedDelay evita concorrer com outros jobs.
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

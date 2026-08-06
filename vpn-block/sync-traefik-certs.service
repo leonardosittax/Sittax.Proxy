@@ -1,0 +1,9 @@
+[Unit]
+Description=Espelha os certificados Let's Encrypt do Traefik (.116) para o proxy
+Documentation=file:///usr/local/bin/sync-traefik-certs.sh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/sync-traefik-certs.sh
